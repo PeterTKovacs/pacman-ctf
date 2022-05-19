@@ -269,3 +269,150 @@ if __name__ == '__main__':
   if len(sys.argv) > 1:
     seed = int(sys.argv[1])
   print(generateMaze(seed))
+
+
+def add_pacman_stuff_train(maze, agent_positions,agent_chars, max_food=60, max_capsules=4, toskip=0):
+
+  '''
+  modified maze generator to facilitate training
+  goal: be able to set starter positions for agents
+
+  most of code copied
+  '''
+
+   ## parameters
+  max_depth = 2
+
+  ## add food at dead ends
+  depth = 0
+  total_food = 0
+  while True:
+    new_grid = copy_grid(maze.grid)
+    depth += 1
+    num_added = 0
+    for row in range(1, maze.r-1):
+      for col in range(1+toskip, int(maze.c/2)-1):
+        if (row > maze.r-6) and (col < 6): continue
+        if maze.grid[row][col] != E: continue
+        neighbors = (maze.grid[row-1][col]==E) + (maze.grid[row][col-1]==E) + (maze.grid[row+1][col]==E) + (maze.grid[row][col+1]==E)
+        if neighbors == 1:
+          new_grid[row][col] = F
+          new_grid[maze.r-row-1][maze.c-(col)-1] = F
+          num_added += 2
+          total_food += 2
+    maze.grid = new_grid
+    if num_added == 0: break
+    if depth >= max_depth: break
+
+  ## starting pacmen positions
+
+  print("starting positions")
+  print(agent_positions)
+
+  maze.grid[agent_positions[2][0]][agent_positions[2][1]] = agent_chars[2]
+  maze.grid[agent_positions[0][0]][agent_positions[0][1]] = agent_chars[0]
+  maze.grid[agent_positions[3][0]][agent_positions[3][1]] = agent_chars[3]
+  maze.grid[agent_positions[1][0]][agent_positions[1][1]] = agent_chars[1]
+
+  ## add capsules
+  total_capsules = 0
+  while total_capsules < max_capsules:
+    row = random.randint(1, maze.r-1)
+    col = random.randint(1+toskip, (maze.c/2)-2)
+    if (row > maze.r-6) and (col < 6): continue
+    if(abs(col - maze.c/2) < 3): continue
+    if maze.grid[row][col] == E:
+      maze.grid[row][col] = C
+      maze.grid[maze.r-row-1][maze.c-(col)-1] = C
+      total_capsules += 2
+
+  ## extra random food
+  while total_food < max_food:
+    row = random.randint(1, maze.r-1)
+    col = random.randint(1+toskip, (maze.c/2)-1)
+    if (row > maze.r-6) and (col < 6): continue
+    if(abs(col - maze.c/2) < 3): continue
+    if maze.grid[row][col] == E:
+      maze.grid[row][col] = F
+      maze.grid[maze.r-row-1][maze.c-(col)-1] = F
+      total_food += 2
+
+def pick_random_legal_pos_on_side(maze,side):
+
+  '''
+  aux funcition to generate layouts for various training purposes
+  '''
+
+  # it seems the maze swaps indexing compared to terrauin
+
+  width=maze.r
+  height=maze.c
+
+  if side=='0':
+    y_pool=range(int(height/2))
+  else:
+    y_pool=range(int(height/2),height)
+
+  x = random.choice(range(width))
+  y = random.choice(y_pool)
+  while maze.grid[x][y]=='%':
+    x = random.choice(range(width))
+    y = random.choice(y_pool)
+
+  print(y_pool)
+  print(maze.grid[x][y])
+  return (x,y)
+
+def generateMaze_train(agent_sides,seed=None):
+  '''
+  maze genrator for our brave new training setup
+  most code copied
+  '''
+
+  if not seed:
+    seed = random.randint(1,MAX_DIFFERENT_MAZES)
+  random.seed(seed)
+  maze = Maze(16,16)
+  gapfactor = min(0.65,random.gauss(0.5,0.1))
+  skip = make_with_prison(maze, depth=0, gaps=3, vert=True, min_width=1, gapfactor=gapfactor)
+  maze.to_map()
+
+  agent_positions= []
+
+  for s in agent_sides:
+    _pos=pick_random_legal_pos_on_side(maze,s)
+    while _pos in agent_positions:
+      _pos=pick_random_legal_pos_on_side(maze,s)
+    agent_positions.append(_pos)
+  
+  def generate_agent_char(idx,side):
+
+    print('----------')
+    print(idx)
+    print(side)
+
+    if idx in [0,2]:
+      if side=='1':
+        return 'G'
+      else:
+        return 'P'
+    else:
+      if side=='0':
+        return 'G'
+      else:
+        return 'P'
+
+  agent_chars=[generate_agent_char(idx,agent_sides[idx]) for idx in range(4)]
+
+  print(agent_chars)
+  
+
+  add_pacman_stuff_train(maze,agent_positions,agent_chars, 2*(maze.r*maze.c/20), 4, skip)
+  return str(maze)
+
+if __name__ == '__main__':
+  seed = None
+  if len(sys.argv) > 1:
+    seed = int(sys.argv[1])
+  print(generateMaze(seed))
+

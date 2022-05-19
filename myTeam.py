@@ -18,6 +18,9 @@ from game import Directions
 import game
 from collections import deque
 import numpy as np
+import torch
+import torch.nn as nn
+import copy
 
 #################
 # Team creation #
@@ -72,7 +75,10 @@ class DummyAgent(CaptureAgent):
     use Manhattan distances instead of maze distances in order to save
     on initialization time, please take a look at
     CaptureAgent.registerInitialState in captureAgents.py.
+
     '''
+    print(self.index)
+    print(len(gameState.data.agentStates))
     self.start = gameState.getAgentPosition(self.index) # copied from baseline
     CaptureAgent.registerInitialState(self, gameState)
 
@@ -94,6 +100,9 @@ class DummyAgent(CaptureAgent):
 
     own_pos=gameState.getAgentPosition(self.index)
 
+    print('startup oppinets')
+    print(self.getOpponents(gameState))
+
     for idx in self.getOpponents(gameState):
       self.enemy_p_belief[idx]=np.zeros((wall.width,wall.height),float)
       # self.enemy_mht_belief[idx]=np.zeros((wall.width+wall.height-1),float)
@@ -113,6 +122,7 @@ class DummyAgent(CaptureAgent):
 
     ## administer belief state
 
+
     own_team=self.getTeam(gameState)
 
     current_observation=self.getCurrentObservation()
@@ -121,6 +131,9 @@ class DummyAgent(CaptureAgent):
     own_pos=gameState.getAgentPosition(self.index)
 
     enemy_idx=self.getOpponents(gameState)
+    print(self.red)
+
+    print(enemy_idx)
 
     ### update beliefs ################################
 
@@ -143,7 +156,8 @@ class DummyAgent(CaptureAgent):
 
           #self.debugDraw([(x,y)],[0.,self.p_reading_given_pos(reading,(x,y),gameState.getAgentPosition(self.index))*12.,0.],False)
 
-      _=self.get_rl_state_from_positions_defense(own_pos,[(5,5),(5,5)],current_observation,3,True)
+      #_=self.get_rl_state_from_positions_flee_attacker(own_pos,[(5,5),(5,5)],current_observation,4,True)
+      #print(_)
       
 
     ######################################################
@@ -316,11 +330,12 @@ class DummyAgent(CaptureAgent):
     # wall=gameState.getWalls()
     halfway=wall.width/2
 
-    if self.red:
-      return cell[0]<=halfway and wall[cell[0]][cell[1]]==False
-    else:
-      return cell[0]>halfway and wall[cell[0]][cell[1]]==False
+    # I think this is the right way to assess
 
+    if self.red:
+      return cell[0]<halfway and wall[cell[0]][cell[1]]==False
+    else:
+      return cell[0]>=halfway and wall[cell[0]][cell[1]]==False
 
   def flee_home(self,gameState):
     '''
@@ -336,8 +351,6 @@ class DummyAgent(CaptureAgent):
       return self.convert_neighbour_to_action(pos,path[-2])
     else:
       return self.convert_neighbour_to_action(pos,path[-1])
-
-
 
   def chase_capsule(self,gameState):
 
@@ -366,7 +379,6 @@ class DummyAgent(CaptureAgent):
 
     return True
 
-
   def convert_neighbour_to_action(self,position,neighbour):
     '''
     to convert desired next gridcell to move (convenience method)
@@ -387,8 +399,7 @@ class DummyAgent(CaptureAgent):
     else:
       return Directions.SOUTH
 
-  
-  def get_rl_state_from_positions_defense(self,own_pos,enemy_positions,current_observation,n_exits=4,debug_plot=False):
+  def get_rl_state_from_positions_flee_attacker(self,own_pos,enemy_positions,current_observation,n_exits=4,debug_plot=False):
     '''
     generate state representation for the ML part, consisting of the distance matrix of own position, enemy positions and exits, and waypoints halfway to them
 
@@ -405,9 +416,9 @@ class DummyAgent(CaptureAgent):
     halfway=int(wall.width/2)
 
     if self.red:
-      x_exit=halfway
+      x_exit=halfway-1
     else:
-      x_exit=halfway+1
+      x_exit=halfway
 
     exit_distances=[]
     exit_points=[]
@@ -442,9 +453,9 @@ class DummyAgent(CaptureAgent):
       ## padding out the gap between n_exit and the actual number of exits
       ## just add some random guys from the same column
 
-      for y in np.random.permutation(exit_points.keys):
-        if not((x_exit,y) in points) and len(points)<(3+n_exit):
-          points.add((x_exit,y))
+      for y in np.random.permutation(exit_points):
+        if not((x_exit,y[0]) in points) and len(points)<(3+n_exits):
+          points.append((x_exit,y[0]))
           
     if len(points)<3+n_exits:
         while(len(points)<3+n_exits):
@@ -471,7 +482,91 @@ class DummyAgent(CaptureAgent):
       for p in range(len(points)):
         self.debugDraw(points[p],[0.,0.5,0.5],p==0)
 
-    print(points)
+    return _dist/(wall.height+wall.width) 
+
+  def get_rl_state_from_positions_flee_defender(self,own_pos,enemy_position,teammate_pos,current_observation,n_exits=4,debug_plot=False):
+    '''
+    generate state representation for the ML part, consisting of the distance matrix of own position, enemy positions and exits, and waypoints halfway to them
+
+    positions assumed to be given as tuples (as usual),
+    enemy_positions shall be a LIST of them
+
+    '''
+
+    points=[own_pos,teammate_pos,enemy_position]
+
+    # get the exits - local minima for distances from us
+
+    wall=current_observation.getWalls()
+    halfway=int(wall.width/2)
+
+    if self.red:
+      x_exit=halfway
+    else:
+      x_exit=halfway-1
+
+    exit_distances=[]
+    exit_points=[]
+
+    for y in range(wall.height):
+      if not wall[x_exit][y]:
+        exit_distances.append(self.getMazeDistance(enemy_position,(x_exit,y)))
+        exit_points.append((y,exit_distances[-1]))
+      else:
+        exit_distances.append(10*wall.height*wall.width)
+
+
+    local_minima=[]
+
+    if exit_distances[0]<exit_distances[1]:
+      local_minima.append((0,exit_distances[0]))
+    if exit_distances[-1]<exit_distances[-2]:
+      local_minima.append((wall.height-1,exit_distances[-1]))
+
+    for i in range(1,wall.height-1):
+      if exit_distances[i]<exit_distances[i+1] and exit_distances[i]<exit_distances[i-1] and exit_distances[i]<10*wall.height*wall.width:
+        local_minima.append((i,exit_distances[i]))
+
+    local_minima.sort(key=lambda x: x[1])
+
+    if len(local_minima)>n_exits:
+      for i in range(n_exits):
+        points.append((x_exit,local_minima[i][0]))
+    else:
+      points=points+[(x_exit,y[0]) for y in local_minima]
+
+      ## padding out the gap between n_exit and the actual number of exits
+      ## just add some random guys from the same column
+
+      for y in np.random.permutation(exit_points.keys):
+        if not((x_exit,y) in points) and len(points)<(3+n_exits):
+          points.append((x_exit,y))
+
+          
+    if len(points)<3+n_exits:
+        while(len(points)<3+n_exits):
+          points.append(current_observation.getInitialAgentPosition(self.getOpponents()[0]))
+
+    # get halfway points to exits
+
+    for i in range(3,3+n_exits):
+      points.append(self.generate_halfway(enemy_position,points[i],wall))
+
+    # calculate distances
+
+    distances=[]
+
+    for i in range(len(points)-1):
+      for j in range(i,len(points)):
+        distances.append(self.getMazeDistance(points[i],points[j]))
+
+    # return normalized values - not really [0,1], just to scale back from huge values to o(1)
+
+    _dist=np.array(distances,float)
+
+    if debug_plot:
+      for p in range(len(points)):
+        self.debugDraw(points[p],[0.,0.5,0.5],p==0)
 
     return _dist/(wall.height+wall.width) 
 
@@ -519,7 +614,6 @@ class DummyAgent(CaptureAgent):
     # else:
     #   self.belief_transition_manhattan_disappearing_food(current_observation,previous_observation)
 
-  
   def belief_transition_direct_observation(self,current_observation,idx):
     '''
     update beliefs upon direct observation of agent of index idx
@@ -554,12 +648,14 @@ class DummyAgent(CaptureAgent):
       capsule=current_observation.getRedCapsules()
       prev_capsule=previous_observation.getRedCapsules()
       enemy_indices=current_observation.getBlueTeamIndices()
+      #enemy_indices=[1,3]
     else:
       food=current_observation.getBlueFood()
       prev_food=previous_observation.getBlueFood()
       capsule=current_observation.getBlueCapsules()
       prev_capsule=previous_observation.getBlueCapsules()
       enemy_indices=current_observation.getRedTeamIndices()
+      #enemy_indices=[2,4]
 
     gaps=[]
 
@@ -604,7 +700,6 @@ class DummyAgent(CaptureAgent):
         self.enemy_p_belief[idx][gaps[1][0],gaps[1][1]]=p_g2[idx]*p_g1[other_idx[idx]]
         self.enemy_p_belief[idx]/=np.sum(self.enemy_p_belief[idx])
 
-
   def belief_transition_noisy_observation(self,current_observation,idx,enemy_policy):
 
     '''
@@ -646,7 +741,6 @@ class DummyAgent(CaptureAgent):
 
     self.enemy_p_belief[idx]=p_new/np.sum(p_new)
 
-
   def p_reading_given_pos(self,reading_,pos,own_pos):
 
     '''
@@ -681,7 +775,6 @@ class DummyAgent(CaptureAgent):
 
       return False
 
-  
   def belief_transition_manhattan_disappearing_food(self,current_observation,previous_observation):
 
 
@@ -751,7 +844,6 @@ class DummyAgent(CaptureAgent):
 
         print(self.enemy_mht_belief[idx])
 
-
   def belief_transition_manhattan_noisy(self,current_observation,idx):
      
     print(self.enemy_mht_belief[idx])
@@ -786,7 +878,6 @@ class DummyAgent(CaptureAgent):
 
     print(self.enemy_mht_belief[idx])
 
-    
   def uniform_policy(self,position,action,current_observation):
 
 
@@ -811,8 +902,38 @@ class DummyAgent(CaptureAgent):
     else:
       return 1./no_negighbours
 
-    
+  def initialize_flee_defense_model(self,n_in):
 
-        
-    
+    '''
+    initialize NN to predict Q(a,s) values for the fleeing attacker
+
+    idea: simple connected network of few layers, predict single real value (and then train with experience replay in approximate Q-learn way)
+    '''
+
+class dqn(nn.Module):
+
+  def __init__(self,n_in):
+
+    super(dqn,self).__init__()
+
+    self.linear_relu_stack = nn.Sequential(
+            nn.Linear(n_in, 100),
+            nn.ReLU(),
+            nn.Linear(100, 70),
+            nn.ReLU(),
+            nn.Linear(70, 40),
+            nn.ReLU(),
+            nn.Linear(40,10),
+            nn.ReLU(),
+            nn.Linear(10,1)
+        )
+
+  def forward(self,x):
+    return self.linear_relu_stack(x)
+
+
+
+
+      
+  
 

@@ -312,9 +312,28 @@ class GameState:
     Creates an initial game state from a layout array (see layout.py).
     """
     self.data.initialize(layout, numAgents)
-    positions = [a.configuration for a in self.data.agentStates]
+    #positions = [a.configuration for a in self.data.agentStates]
+
+    # all this havoc is about getting the appropriate agent states to the hardcoded indices!!!!
+
+    positions = [a for a in self.data.agentStates]
     self.blueTeam = [i for i,p in enumerate(positions) if not self.isRed(p)]
     self.redTeam = [i for i,p in enumerate(positions) if self.isRed(p)]
+
+    _blue_agentstates=[self.data.agentStates[i] for i in self.blueTeam]
+    _red_agentstates=[self.data.agentStates[i] for i in self.redTeam]
+
+    self.data.agentStates=[_red_agentstates[0],_blue_agentstates[0],_red_agentstates[1],_blue_agentstates[1]]
+    positions = [a for a in self.data.agentStates]
+    self.blueTeam = [i for i,p in enumerate(positions) if not self.isRed(p)]
+    self.redTeam = [i for i,p in enumerate(positions) if self.isRed(p)]
+
+
+    print(self.blueTeam)
+    [print(self.data.agentStates[i].configuration.pos) for i in self.blueTeam]
+    print(self.redTeam)
+    [print(self.data.agentStates[i].configuration.pos) for i in self.redTeam]
+
     self.teams = [self.isRed(p) for p in positions]
     #This is usually 60 (always 60 with random maps)
     #However, if layout map is specified otherwise, it could be less
@@ -325,6 +344,15 @@ class GameState:
     width = self.data.layout.width
     if type(configOrPos) == type( (0,0) ):
       return configOrPos[0] < width / 2
+    elif type(configOrPos)==type(self.data.agentStates[0]):
+
+      ######################
+      if not configOrPos.isPacman:
+        return configOrPos.configuration.pos[0] < width / 2
+      else:
+        return configOrPos.configuration.pos[0] >= width / 2
+
+      ######################
     else:
       return configOrPos.pos[0] < width / 2
 
@@ -882,6 +910,16 @@ def readCommand( argv ):
       l = layout.Layout(randomLayout().split('\n'))
     elif options.layout.startswith('RANDOM'):
       l = layout.Layout(randomLayout(int(options.layout[6:])).split('\n'))
+
+    ###################################################################################
+
+    elif options.layout.startswith('TRAIN'): # TRAIN_0101
+      l=layout.Layout(random_train_layout(options.layout[6:10]).split('\n'))
+    elif options.layout.startswith('sTRAIN'): # sTRAIN_0101_
+      l=layout.Layout(random_train_layout(options.layout[7:11],int(options.layout[12:])).split('\n'))
+
+    #################################################################################xx
+    
     elif options.layout.lower().find('capture') == -1:
       raise Exception( 'You must use a capture layout with capture.py')
     else:
@@ -889,6 +927,9 @@ def readCommand( argv ):
     if l == None: raise Exception("The layout " + options.layout + " cannot be found")
     
     layouts.append(l)
+
+    for line in l.layoutText:
+      print(line)
     
   args['layouts'] = layouts
   args['length'] = options.time
@@ -905,6 +946,22 @@ def randomLayout(seed = None):
   # print('Generating random layout in %s' % layout)
   import mazeGenerator
   return mazeGenerator.generateMaze(seed)
+
+#########################################################################
+#### ADDENDUM FOR TRAINING
+#########################################################################
+
+def random_train_layout(agent_sides,seed=None):
+  if not seed:
+    seed = random.randint(0,99999999)
+  # layout = 'layouts/random%08dCapture.lay' % seed
+  # print('Generating random layout in %s' % layout)
+  import mazeGenerator
+  return mazeGenerator.generateMaze_train(agent_sides,seed)
+
+
+#########################################################################
+#########################################################################
 
 import traceback
 def loadAgents(isRed, factory, textgraphics, cmdLineArgs):
