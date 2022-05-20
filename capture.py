@@ -49,7 +49,7 @@ The keys are
   P2: 'l', ';', ',' and 'p' to move
 """
 from game import GameStateData
-from game import Game
+from game import Game, training_episode
 from game import Directions
 from game import Actions
 from util import nearestPoint
@@ -60,6 +60,7 @@ from game import Agent
 from game import reconstituteGrid
 import sys, util, types, time, random, importlib
 import keyboardAgents
+from train_stuff import dqn,train_manager
 
 # If you change these, you won't affect the server, so you can't cheat
 KILL_POINTS = 0
@@ -392,6 +393,26 @@ class CaptureRules:
 
   def __init__(self, quiet = False):
     self.quiet = quiet
+
+
+  ##############################################
+
+  def new_train_episode( self, layout, agents, display, length, muteAgents, catchExceptions):
+    initState = GameState()
+    initState.initialize( layout, len(agents) )
+    starter = random.randint(0,1)
+    print('%s team starts' % ['Red', 'Blue'][starter])
+    game = training_episode(agents, display, self, startingIndex=starter, muteAgents=muteAgents, catchExceptions=catchExceptions)
+    game.state = initState
+    game.length = length
+    game.state.data.timeleft = length
+    if 'drawCenterLine' in dir(display):
+      display.drawCenterLine()
+    self._initBlueFood = initState.getBlueFood().count()
+    self._initRedFood = initState.getRedFood().count()
+    return game
+
+  ##############################################
 
   def newGame( self, layout, agents, display, length, muteAgents, catchExceptions ):
     initState = GameState()
@@ -837,6 +858,9 @@ def readCommand( argv ):
   parser.add_option('-c', '--catchExceptions', action='store_true', default=False,
                     help='Catch exceptions and enforce time limits')
 
+  parser.add_option('--training_attack_team', help=default('none, blue/red'),
+                    default='none')
+
   options, otherjunk = parser.parse_args(argv)
   assert len(otherjunk) == 0, "Unrecognized options: " + str(otherjunk)
   args = dict()
@@ -937,6 +961,10 @@ def readCommand( argv ):
   args['numTraining'] = options.numTraining
   args['record'] = options.record
   args['catchExceptions'] = options.catchExceptions
+
+  if options.training_attack_team!='none':
+    args['training_attack_team']=options.training_attack_team
+
   return args
 
 def randomLayout(seed = None):
@@ -1020,6 +1048,64 @@ def replayGame( layout, agents, actions, display, length, redTeamName, blueTeamN
 
     display.finish()
 
+def run_training_episodes(layouts, agents, display, length, numGames, record, numTraining, redTeamName, blueTeamName, muteAgents=False, catchExceptions=False, training_attack_team="blue"):
+
+  rules = CaptureRules()
+  games = []
+
+  if numTraining > 0:
+    print('Playing %d training games' % numTraining)
+
+
+  if training_attack_team=="blue":
+      _at=[1,3]
+      _dt=[0,2]
+  else:
+      _at=[0,2]
+      _dt=[1,3]
+
+  attack_manager=train_manager(_at,n_replay=10000,batch_size=10,update_frequency=50,device="cuda",model=dqn,model_args={"n_in":100,"replay_buffer":None,"lrate":5e-4})
+  defense_manager=train_manager(_dt,n_replay=10000,batch_size=10,update_frequency=50,device="cuda",model=dqn,model_args={"n_in":100,"replay_buffer":None,"lrate":5e-4})
+
+  for i in range( numGames ):
+    beQuiet = i < numTraining
+    layout = layouts[i]
+    if beQuiet:
+        # Suppress output and graphics
+        import textDisplay
+        gameDisplay = textDisplay.NullGraphics()
+        rules.quiet = True
+    else:
+        gameDisplay = display
+        rules.quiet = False
+    g = rules.new_train_episode( layout, agents, gameDisplay, length, muteAgents, catchExceptions )
+    g.run(attack_manager,defense_manager)
+    if not beQuiet: games.append(g)
+
+    g.record = None
+    if record:
+      import time, pickle, game
+      #fname = ('recorded-game-%d' % (i + 1)) +  '-'.join([str(t) for t in time.localtime()[1:6]])
+      #f = file(fname, 'w')
+      components = {'layout': layout, 'agents': [game.Agent() for a in agents], 'actions': g.moveHistory, 'length': length, 'redTeamName': redTeamName, 'blueTeamName':blueTeamName }
+      #f.close()
+      print("recorded")
+      g.record = pickle.dumps(components)
+      with open('replay-%d'%i,'wb') as f:
+        f.write(g.record)
+
+  if numGames > 1:
+    scores = [game.state.data.score for game in games]
+    redWinRate = [s > 0 for s in scores].count(True)/ float(len(scores))
+    blueWinRate = [s < 0 for s in scores].count(True)/ float(len(scores))
+    print('Average Score:', sum(scores) / float(len(scores)))
+    print('Scores:       ', ', '.join([str(score) for score in scores]))
+    print('Red Win Rate:  %d/%d (%.2f)' % ([s > 0 for s in scores].count(True), len(scores), redWinRate))
+    print('Blue Win Rate: %d/%d (%.2f)' % ([s < 0 for s in scores].count(True), len(scores), blueWinRate))
+    print('Record:       ', ', '.join([('Blue', 'Tie', 'Red')[max(0, min(2, 1 + s))] for s in scores]))
+  return games
+
+
 def runGames( layouts, agents, display, length, numGames, record, numTraining, redTeamName, blueTeamName, muteAgents=False, catchExceptions=False ):
 
   rules = CaptureRules()
@@ -1082,7 +1168,12 @@ if __name__ == '__main__':
   > python capture.py --help
   """
   options = readCommand( sys.argv[1:] ) # Get game components based on input
-  games = runGames(**options)
+
+  if "training_attack_team" in options.keys():
+
+    games = run_training_episodes(**options)
+  else:
+    games = runGames(**options)
 
   save_score(games[0])
   # import cProfile
