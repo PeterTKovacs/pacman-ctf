@@ -26,6 +26,7 @@ import traceback
 import sys
 from train_stuff import train_manager,dqn
 
+
 #######################
 # Parts worth reading #
 #######################
@@ -732,10 +733,10 @@ class Game:
                     return
         self.display.finish()
 
-def training_episode(Game):
+class training_episode(Game):
 
     def __init__(self, agents, display, rules, startingIndex=0, muteAgents=False, catchExceptions=False ):
-        super(training_episode).__init__(self, agents, display, rules, startingIndex, muteAgents, catchExceptions)
+        super(training_episode,self).__init__(agents, display, rules, startingIndex, muteAgents, catchExceptions)
 
     def run(self,attack_manager,defense_manager):
         '''
@@ -799,12 +800,21 @@ def training_episode(Game):
         numAgents = len( self.agents )
 
         #######################################
-        for idx in self.agents.keys():
+        for idx in range(len(self.agents)):
             agent=self.agents[idx]
-            if idx in attack_manager.team_indices:
-                agent.set_train_manger(attack_manager)
-            else:
-                agent.set_train_manger(defense_manager)
+
+            
+            print(agent.index)
+            try:
+
+                if idx in attack_manager.team_indices:
+                    agent.set_train_manager(attack_manager)
+                else:
+                    agent.set_train_manager(defense_manager)
+                print("train manager set")
+
+            except:
+                print("non DummyAgent")
 
         #######################################
 

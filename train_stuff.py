@@ -30,15 +30,16 @@ class dqn(nn.Module):
     self.optimizer=torch.optim.SGD(self.parameters(),lrate)
 
   def forward(self,x):
+
     return self.linear_relu_stack(x)
 
   def predict_value(self,x,detach=True):
 
     self.eval()
     if detach:
-      return self.forward(x).detach().cpu().numpy()[0]
+      return self.forward(self.predict_transform(x)).detach().cpu().numpy()[0]
     else:
-      return self.forward(x)
+      return self.forward(self.predict_transform(x)).numpy()[0]
 
   def trainstep(self,batch,device='cuda'): 
         
@@ -66,10 +67,16 @@ class dqn(nn.Module):
     x=[replay_buffer[i][0] for i in indices]
     y=[replay_buffer[i][1] for i in indices]
 
-    return (torch.Tensor(x),torch.Tensor(y))
+    return (torch.Tensor(x).to(torch.float),torch.Tensor(y).to(torch.float))
 
   def batch_transform(self,batch,device):
     return batch[0].to(device),batch[1].to(device)
+
+  def predict_transform(self,x,device="cuda"):
+    xx=torch.from_numpy(x).to(torch.float)
+    torch.reshape(xx,(1,-1))
+
+    return xx.to(device)
 
 
 class train_manager:
@@ -141,7 +148,7 @@ class train_manager:
       self.buffer_write_idx=(self.buffer_write_idx+1)%self.n_replay
 
     self.past_states[idx]=self.current_states[idx]
-    self.past_features[idx]=self.current_features[buffer_write_idx]
+    self.past_features[idx]=self.current_features[idx]
 
   def reward_generator(self,old_state,new_state):
 
@@ -149,10 +156,15 @@ class train_manager:
 
   def training_step(self):
 
-    indices=random.choice(range(len(self.replay_buffer)))
-    batch=self.warm_model.generate_batch(replay_buffer,indices)
+   
+    
 
-    self.warm_model.training_step(batch,self.device)
+    indices=list(random.choices(range(len(self.replay_buffer)),k=self.batch_size))
+    batch=self.warm_model.generate_batch(self.replay_buffer,indices)
+
+    self.warm_model.trainstep(batch,self.device)
+
+    print("trainstep: ",self.backprop_counter)
 
     self.backprop_counter+=1
 
@@ -175,11 +187,11 @@ class train_manager:
       self.eval()
 
   def reset_state_logs(self):
-    self.past_states={i:None for i in team_indices} # store the features
-    self.past_features={i:None for i in team_indices}
-    self.rewards={i:None for i in team_indices}
-    self.current_states={i:None for i in team_indices}
-    self.current_features={i:None for i in team_indices}
+    self.past_states={i:None for i in self.team_indices} # store the features
+    self.past_features={i:None for i in self.team_indices}
+    self.rewards={i:None for i in self.team_indices}
+    self.current_states={i:None for i in self.team_indices}
+    self.current_features={i:None for i in self.team_indices}
 
       
   

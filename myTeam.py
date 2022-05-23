@@ -56,8 +56,10 @@ class DummyAgent(CaptureAgent):
   You should look at baselineTeam.py for more details about how to
   create an agent as this is the bare minimum.
   """
+  def _debug_msg(self):
+    print("ola")
 
-  def set_train_manger(self,train_manager):
+  def set_train_manager(self,train_manager):
     self.train_manager=train_manager
 
   def registerInitialState(self, gameState):
@@ -131,8 +133,8 @@ class DummyAgent(CaptureAgent):
     if self.train_manager!=None:
       tm=self.train_manager
 
-      tm.log_state(gameState)
-      tm.administer_state_transition()
+      tm.log_state(gameState,np.random.rand(100),self.index)
+      tm.administer_state_transition(self.index)
 
       admissable_actions=gameState.getLegalActions(self.index)
       possible_afterstates=[np.random.rand(100) for a in admissable_actions]
