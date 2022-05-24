@@ -63,13 +63,13 @@ class SimpleAgent(CaptureAgent):
     """
     def makHomeTurfGrid(self,grid):
         halfway = int(grid.width / 2)
-        self.hometurf = Grid(grid.width, grid.height, True)
+        self.hometurf = Grid(grid.width, grid.height, False)
         if self.red:    xrange = range(halfway)
         else:       xrange = range(halfway, grid.width)
 
         for y in range(grid.height):
             for x in xrange:
-                self.hometurf[x][y] = False
+                self.hometurf[x][y] = True
     def _debug_msg(self):
         print("simpleAgent")
 
@@ -115,11 +115,11 @@ class SimpleAgent(CaptureAgent):
         # self.enemy_mht_belief={}
 
         own_pos = gameState.getAgentPosition(self.index)
-
+        self.numCarrying = 0
         print('startup oppinets')
         print(self.getOpponents(gameState))
         self.makHomeTurfGrid(self.getFood(gameState))
-        print(self.hometurf)
+        #print(self.hometurf)
         for idx in self.getOpponents(gameState):
             self.enemy_p_belief[idx] = np.zeros(
                 (wall.width, wall.height), float)
@@ -135,7 +135,7 @@ class SimpleAgent(CaptureAgent):
         self.distancer.getMazeDistances()  # thus we can access them fast
         
     def chooseAction(self, gameState):
-        
+        self.numCarrying = gameState.data.agentStates[self.index].numCarrying
         own_team = self.getTeam(gameState)
 
         current_observation = self.getCurrentObservation()
@@ -171,21 +171,23 @@ class SimpleAgent(CaptureAgent):
             # print(_)
 
         ######################################################
-        self.closest_escape(gameState)
-        actions = [self.find_closest_enemy_food(gameState)]
-        self.find_closest_enemy_food(gameState)
+        #self.closest_escape(gameState)
+        
+        #actions = [self.find_closest_enemy_food(gameState)]
+        #dir, length = self.find_closest_enemy_food(gameState)
+        dir, length = self.find_closest_enemy_food(gameState)
         #print(str(self.getFood(gameState).width) + ', ' + str(self.getFood(gameState).height))
         if(self.is_on_enemy_territory(gameState)):
             if(self.loot(gameState)):
                 # loot action placeholder
-                actions = [self.find_closest_enemy_food(gameState)]
+                actions, _ = self.find_closest_enemy_food(gameState)
             else:
                 if(self.chase_capsule(gameState)):
                     # chase enemy power capsule placeholder
                     actions = [self.find_closest_capsule(gameState)]
                 else:
                     # flee placeholder
-                    actions = [self.flee_home(gameState)]
+                    actions, _ = self.closest_escape(gameState)
         else:
             if(self.defend_own_territory(gameState)):
                 if(self.chase_agents(gameState)):
@@ -196,7 +198,7 @@ class SimpleAgent(CaptureAgent):
                     actions = gameState.getLegalActions(self.index)
             else:
                 # head to enemy territory placeholder
-                actions = [self.find_closest_enemy_food(gameState)]
+                actions, _ = self.find_closest_enemy_food(gameState)
 
         """
     Picks among actions randomly.
@@ -204,8 +206,10 @@ class SimpleAgent(CaptureAgent):
         # actions = gameState.getLegalActions(self.index)
 
         '''
+        
     You should change this in your own agent.
     '''
+        print(actions)
         # return 'east' 'west' 'south' or 'north'
         return random.choice(actions)
 
@@ -219,7 +223,8 @@ class SimpleAgent(CaptureAgent):
         function to decide wheter we should go for enemy food
         (called on enemy terrain)
         '''
-
+        _ , length = self.find_closest_enemy_food(gameState)
+        return self.numCarrying < 1 or length < 3
         return False
 
     def closest_enemy(self):
@@ -228,12 +233,20 @@ class SimpleAgent(CaptureAgent):
     def closest_escape(self,gameState):
         """
         find the quickest path to escape back to own territory
-        returns 0 and stop if starting on friendly terrority
+        should return 'stop' 0 and if starting on friendly terrority
         """
         pass
         pos = gameState.getAgentPosition(self.index)
         wall = gameState.getWalls()
-        dir, path = self.bfs_until(pos, lambda x: self.hometurf[x[0]][x[1]], wall, True)
+        dir, path = self.bfs_until(pos, lambda x: self.hometurf[x[0]][x[1]], wall, False)
+        length = len(path)
+        if len(path) > 1:
+            dir = self.convert_neighbour_to_action(pos, path[-2])
+        elif len(path) == 1:
+            dir =  self.convert_neighbour_to_action(pos, path[-1])
+        else:
+            dir = 'Stop'
+        return [dir], length
     def bfs_until(self, position, is_goal_territory, wall, plot=False):
         '''
         function to perform BFS from given position until it gets to the goal territory (eg. enemy food, home terrain,...) 
@@ -296,7 +309,7 @@ class SimpleAgent(CaptureAgent):
 
         if plot:
             self.debugDraw(path, [0.5, 0.5, 0.], True)
-        print("path length is " + str(len(path)))
+        #print("path length is " + str(len(path)))
         return aim, path
 
     def find_closest_enemy_food(self, gameState):
@@ -312,10 +325,13 @@ class SimpleAgent(CaptureAgent):
             pos, lambda x: enemy_food[x[0]][x[1]], wall, False)
 
         if len(path) > 1:
-            return self.convert_neighbour_to_action(pos, path[-2])
+            dir = self.convert_neighbour_to_action(pos, path[-2])
+        elif len(path) == 1:
+            dir =  self.convert_neighbour_to_action(pos, path[-1])
         else:
-            return self.convert_neighbour_to_action(pos, path[-1])
-
+            dir = 'Stop'
+        length = len(path)
+        return [dir], length
     def find_closest_capsule(self, gameState):
         '''
         BFS to closest capsule, return a move towards
@@ -332,10 +348,13 @@ class SimpleAgent(CaptureAgent):
             pos, lambda x: x in enemy_capsule, wall, True)
 
         if len(path) > 1:
-            return self.convert_neighbour_to_action(pos, path[-2])
+            dir = self.convert_neighbour_to_action(pos, path[-2])
+        elif len(path) == 1:
+            dir =  self.convert_neighbour_to_action(pos, path[-1])
         else:
-            return self.convert_neighbour_to_action(pos, path[-1])
-
+            dir = 'Stop'
+        length = len(path)
+        return [dir], length
     def is_home_territory(self, gameState, cell, wall):
         '''
         determine if a given cell is traversable home territory
@@ -382,7 +401,7 @@ class SimpleAgent(CaptureAgent):
         (called on own terrain)
         '''
 
-        return True
+        return False
 
     def chase_agents(self, gameState):
         '''
@@ -620,7 +639,8 @@ class SimpleAgent(CaptureAgent):
         for idx in enemy_indices:
             self.enemy_p_belief[idx] = np.array(
                 self.enemy_p_belief[idx] > 0., float)
-
+            #print(np.array(self.enemy_p_belief[idx] > 0., bool))
+        
         # for idx in enemy_indices:
         #   if not self.belief_transition_manhattan_direct(current_observation,idx):
         #     self.belief_transition_manhattan_noisy(current_observation,idx)
