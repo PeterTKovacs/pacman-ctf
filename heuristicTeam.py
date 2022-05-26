@@ -72,7 +72,25 @@ class SimpleAgent(CaptureAgent):
                 self.hometurf[x][y] = True
     def _debug_msg(self):
         print("simpleAgent")
-
+    def pathGridFromAgentPosition(self,gameState):
+        wall = gameState.getWalls()
+        start = np.zeros((wall.width, wall.height),int)
+        position = gameState.getAgentPosition(self.index)
+        start[position[0],position[1]] = 1
+        return self.makeShortestPathGrid(wall,start)
+    
+    def pathGridFromEnemies(self,gameState):
+        wall = gameState.getWalls()
+        belief = np.zeros((wall.width, wall.height),int)
+        for idx in self.getOpponents(gameState):
+            belief += self.enemy_p_belief[idx] > 0
+        return self.makeShortestPathGrid(wall,belief)
+    
+    def pathGridFromFood(self,gameState):
+        wall = gameState.getWalls()
+        food = np.array(self.getFood(gameState).data,int)
+        return self.makeShortestPathGrid(wall,food)
+    
     def registerInitialState(self, gameState):
         """
         This method handles the initial setup of the
@@ -100,7 +118,7 @@ class SimpleAgent(CaptureAgent):
             self.index)  # copied from baseline
         CaptureAgent.registerInitialState(self, gameState)
 
-        print(self.start)
+        #print(self.start)
 
         # can we do better for the initial belief than uniform?
         # just enemy half, .....
@@ -110,7 +128,8 @@ class SimpleAgent(CaptureAgent):
     '''
 
         wall = gameState.getWalls()
-        
+        #print("here are walls")
+        #print(wall)
         self.enemy_p_belief = {}
         # self.enemy_mht_belief={}
 
@@ -119,6 +138,7 @@ class SimpleAgent(CaptureAgent):
         print('startup oppinets')
         print(self.getOpponents(gameState))
         self.makHomeTurfGrid(self.getFood(gameState))
+        
         #print(self.hometurf)
         for idx in self.getOpponents(gameState):
             self.enemy_p_belief[idx] = np.zeros(
@@ -131,7 +151,6 @@ class SimpleAgent(CaptureAgent):
             # self.enemy_mht_belief[idx][mht_dist]=1.
 
         # TODO: bfs from the entries to enemy/own territory to flee ASAP?
-
         self.distancer.getMazeDistances()  # thus we can access them fast
         
     def chooseAction(self, gameState):
@@ -161,9 +180,9 @@ class SimpleAgent(CaptureAgent):
                         delete = True
                     else:
                         delete = False
-                    # self.debugDraw([(x,y)],[0.,min(1e12*self.enemy_p_belief[min(enemy_idx)][x,y],1.),0.],delete)
+                    #self.debugDraw([(x,y)],[0.,min(1e12*self.enemy_p_belief[min(enemy_idx)][x,y],1.),0.],delete)
 
-                    # self.debugDraw([(x,y)],[0.,min(1.,20*self.enemy_p_belief[min(enemy_idx)][x,y]),0.],delete)
+                    #self.debugDraw([(x,y)],[0.,min(1.,20*self.enemy_p_belief[min(enemy_idx)][x,y]),0.],delete)
 
                     # self.debugDraw([(x,y)],[0.,self.p_reading_given_pos(reading,(x,y),gameState.getAgentPosition(self.index))*12.,0.],False)
 
@@ -177,10 +196,14 @@ class SimpleAgent(CaptureAgent):
         #dir, length = self.find_closest_enemy_food(gameState)
         dir, length = self.find_closest_enemy_food(gameState)
         #print(str(self.getFood(gameState).width) + ', ' + str(self.getFood(gameState).height))
+        self.enemyGridPaths = self.pathGridFromEnemies(gameState)
+        self.foodGridPaths = self.pathGridFromFood(gameState)
+        self.agentPaths = self.pathGridFromAgentPosition(gameState)
+        print(gameState.getLegalActions(self.index))
         if(self.is_on_enemy_territory(gameState)):
             if(self.loot(gameState)):
                 # loot action placeholder
-                actions, _ = self.find_closest_enemy_food(gameState)
+                actions = self.find_closest_enemy_food2(gameState)
             else:
                 if(self.chase_capsule(gameState)):
                     # chase enemy power capsule placeholder
@@ -198,7 +221,7 @@ class SimpleAgent(CaptureAgent):
                     actions = gameState.getLegalActions(self.index)
             else:
                 # head to enemy territory placeholder
-                actions, _ = self.find_closest_enemy_food(gameState)
+                actions = self.find_closest_enemy_food2(gameState)
 
         """
     Picks among actions randomly.
@@ -311,7 +334,24 @@ class SimpleAgent(CaptureAgent):
             self.debugDraw(path, [0.5, 0.5, 0.], True)
         #print("path length is " + str(len(path)))
         return aim, path
-
+    def find_closest_enemy_food2(self,gameState):
+        moveGrid = -self.enemyGridPaths+self.agentPaths+1.01*self.foodGridPaths
+        position = gameState.getAgentPosition(self.index)
+        i = position[0]
+        j = position[1]
+        moveGrid -= moveGrid[i,j]
+        wall = gameState.getWalls()
+        cross = [(1,0),(-1,0),(0,1),(0,-1)]
+        bestMove = 999999
+        bestDir = Directions.STOP
+        for offset in cross:
+            ii = offset[0]
+            jj = offset[1]
+            if not wall[ii+i][jj+j] and moveGrid[ii+i][jj+j] < bestMove:
+                bestMove = moveGrid[ii+i][jj+j]
+                bestDir = self.convert_neighbour_to_action(position,(ii+i,jj+j))
+                print(bestDir)
+        return [bestDir]
     def find_closest_enemy_food(self, gameState):
         '''
         BFS to closest enemy food, return a move towards
@@ -517,6 +557,33 @@ class SimpleAgent(CaptureAgent):
 
         return _dist/(wall.height+wall.width)
 
+    def npToGrid(array):
+        pass
+    def gridToNp(grid,type):
+        pass
+    def makeShortestPathGrid(self,walls,start):
+        """Creates a grid of the map with the number of moves to get to every point in the map a given set of starting point(s)
+            Walls is a grid object with true and false if there is a wall in a given spot. Start is a numpy array which is 1 where we start and 0 otherwise"""
+        newPoints = deque(zip(*np.where(start > 0)))
+        #print("ZIOP")
+        #print(newPoints)
+        pathMatrix = np.full((walls.width, walls.height),99999, float)
+        pathMatrix[start == 1] = 0
+        cross = [(1,0),(-1,0),(0,1),(0,-1)]
+        while len(newPoints) > 0:
+            point = newPoints.popleft()
+            i = point[0]
+            j = point[1]
+            value = pathMatrix[i,j]
+            for offset in cross:
+                ii = offset[0]
+                jj = offset[1]
+                if not walls[ii+i][jj+j] and pathMatrix[ii+i][jj+j] > value + 1:
+                    #print("Appended")
+                    newPoints.append((ii+i,jj+j))
+                    pathMatrix[ii+i][jj+j] = value + 1
+        #print(pathMatrix) 
+        return pathMatrix
     def get_rl_state_from_positions_flee_defender(self, own_pos, enemy_position, teammate_pos, current_observation, n_exits=4, debug_plot=False):
         '''
         generate state representation for the ML part, consisting of the distance matrix of own position, enemy positions and exits, and waypoints halfway to them
@@ -640,7 +707,6 @@ class SimpleAgent(CaptureAgent):
             self.enemy_p_belief[idx] = np.array(
                 self.enemy_p_belief[idx] > 0., float)
             #print(np.array(self.enemy_p_belief[idx] > 0., bool))
-        
         # for idx in enemy_indices:
         #   if not self.belief_transition_manhattan_direct(current_observation,idx):
         #     self.belief_transition_manhattan_noisy(current_observation,idx)
@@ -893,11 +959,11 @@ class SimpleAgent(CaptureAgent):
                 self.enemy_mht_belief[idx] /= np.sum(
                     self.enemy_mht_belief[idx])
 
-                print(self.enemy_mht_belief[idx])
+                #print(self.enemy_mht_belief[idx])
 
     def belief_transition_manhattan_noisy(self, current_observation, idx):
 
-        print(self.enemy_mht_belief[idx])
+        #print(self.enemy_mht_belief[idx])
 
         new_belief = np.zeros(self.enemy_mht_belief[idx].shape, float)
         old_belief = self.enemy_mht_belief[idx]
@@ -927,7 +993,7 @@ class SimpleAgent(CaptureAgent):
 
         self.enemy_mht_belief[idx] = new_belief
 
-        print(self.enemy_mht_belief[idx])
+        #print(self.enemy_mht_belief[idx])
 
     def uniform_policy(self, position, action, current_observation):
 
