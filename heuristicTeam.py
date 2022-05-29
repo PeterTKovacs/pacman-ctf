@@ -12,6 +12,7 @@
 # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
 
+from turtle import position
 from captureAgents import CaptureAgent
 import random
 import time
@@ -54,13 +55,14 @@ def createTeam(firstIndex, secondIndex, isRed,
 # Agents #
 ##########
 
-
 class SimpleAgent(CaptureAgent):
     """
     A Dummy agent to serve as an example of the necessary agent structure.
     You should look at baselineTeam.py for more details about how to
     create an agent as this is the bare minimum.
     """
+    testVar = 5
+    enemyBeleif = np.zeros(())
     def makHomeTurfGrid(self,grid):
         halfway = int(grid.width / 2)
         self.hometurf = Grid(grid.width, grid.height, False)
@@ -73,9 +75,27 @@ class SimpleAgent(CaptureAgent):
     def _debug_msg(self):
         print("simpleAgent")
     def pathGridFromAgentPosition(self,gameState):
+        position = gameState.getAgentPosition(self.index)
+        return self.PathGridFromPoint(gameState,position)
+    
+    def pathGridFromHome(self, gameState):
+        wall = gameState.getWalls()
+        npWall = np.array(wall.data,int)
+        #print("WAT")
+        #print(npWall)
+        grid = np.ones((wall.width, wall.height),int)
+        grid-=npWall
+        half = int(wall.width/2)
+        #print(half)
+        if self.red:
+            grid[half:,:] = 0
+        else:
+            grid[0:half,:] = 0
+        #print(grid)
+        return self.makeShortestPathGrid(wall,grid)
+    def PathGridFromPoint(self,gameState,position):
         wall = gameState.getWalls()
         start = np.zeros((wall.width, wall.height),int)
-        position = gameState.getAgentPosition(self.index)
         start[position[0],position[1]] = 1
         return self.makeShortestPathGrid(wall,start)
     
@@ -84,13 +104,13 @@ class SimpleAgent(CaptureAgent):
         belief = np.zeros((wall.width, wall.height),int)
         for idx in self.getOpponents(gameState):
             belief += self.enemy_p_belief[idx] > 0
+        self.plotGrid(belief-1,(-0.1,0.1))
         return self.makeShortestPathGrid(wall,belief)
     
     def pathGridFromFood(self,gameState):
         wall = gameState.getWalls()
         food = np.array(self.getFood(gameState).data,int)
         return self.makeShortestPathGrid(wall,food)
-    
     def registerInitialState(self, gameState):
         """
         This method handles the initial setup of the
@@ -132,7 +152,7 @@ class SimpleAgent(CaptureAgent):
         #print(wall)
         self.enemy_p_belief = {}
         # self.enemy_mht_belief={}
-
+        self.insibilitySteps = 0
         own_pos = gameState.getAgentPosition(self.index)
         self.numCarrying = 0
         print('startup oppinets')
@@ -152,14 +172,21 @@ class SimpleAgent(CaptureAgent):
 
         # TODO: bfs from the entries to enemy/own territory to flee ASAP?
         self.distancer.getMazeDistances()  # thus we can access them fast
-        
+    def plotGrid(self,grid,range):
+        upper = range[1]
+        lower = range[0]
+        points = list(zip(*np.where(np.multiply(grid > lower,grid < upper))))
+        print(points)
+        self.debugDraw(points, [0.5, 0.5, 0.], True)
     def chooseAction(self, gameState):
         self.numCarrying = gameState.data.agentStates[self.index].numCarrying
         own_team = self.getTeam(gameState)
-
+        print(self.__class__.testVar)
+        if self.__class__.testVar == 5 and self.index == 1:
+            self.__class__.testVar = 10
         current_observation = self.getCurrentObservation()
         previous_observation = self.getPreviousObservation()
-
+        self.is_invinsible(gameState)
         own_pos = gameState.getAgentPosition(self.index)
 
         enemy_idx = self.getOpponents(gameState)
@@ -199,18 +226,21 @@ class SimpleAgent(CaptureAgent):
         self.enemyGridPaths = self.pathGridFromEnemies(gameState)
         self.foodGridPaths = self.pathGridFromFood(gameState)
         self.agentPaths = self.pathGridFromAgentPosition(gameState)
-        print(gameState.getLegalActions(self.index))
+        self.homeDistancePaths = self.pathGridFromHome(gameState)
         if(self.is_on_enemy_territory(gameState)):
-            if(self.loot(gameState)):
-                # loot action placeholder
-                actions = self.find_closest_enemy_food2(gameState)
+            if self.is_invinsible(gameState):
+                actions = self.find_closest_enemy_food_invinsible(gameState)
             else:
                 if(self.chase_capsule(gameState)):
-                    # chase enemy power capsule placeholder
-                    actions = [self.find_closest_capsule(gameState)]
+                    # loot action placeholder
+                    actions, _ = self.find_closest_capsule(gameState)
                 else:
-                    # flee placeholder
-                    actions, _ = self.closest_escape(gameState)
+                    if(self.loot(gameState)):
+                        # chase enemy power capsule placeholder
+                        actions = self.find_closest_enemy_food2(gameState)
+                    else:
+                        # flee placeholder
+                        actions, _ = self.closest_escape(gameState)
         else:
             if(self.defend_own_territory(gameState)):
                 if(self.chase_agents(gameState)):
@@ -247,7 +277,7 @@ class SimpleAgent(CaptureAgent):
         (called on enemy terrain)
         '''
         _ , length = self.find_closest_enemy_food(gameState)
-        return self.numCarrying < 1 or length < 3
+        return  (self.numCarrying == 0) or (self.numCarrying == 1 and length < 5)  or (self.numCarrying == 2 and length < 4)  or (self.numCarrying == 3 and length < 3)  or (self.numCarrying == 4 and length < 2)or (self.numCarrying == 5 and length < 1)
         return False
 
     def closest_enemy(self):
@@ -331,17 +361,65 @@ class SimpleAgent(CaptureAgent):
                 _parent = parent[_parent]
 
         if plot:
+            print(path)
             self.debugDraw(path, [0.5, 0.5, 0.], True)
         #print("path length is " + str(len(path)))
         return aim, path
-    def find_closest_enemy_food2(self,gameState):
-        moveGrid = -self.enemyGridPaths+self.agentPaths+1.01*self.foodGridPaths
+    def get_optimal_path(self, gameState):
+        p = gameState.getAgentPosition(self.index)
+        foods = np.array(self.getFood(gameState).data,int)
+        F = [self.agentPaths]
+        for food in foods:
+            F.append(self.PathGridFromPoint(gameState, food))
+        A = self.agentPaths
+        H = self.homeDistancePaths
+        self.optirec(H,F,p,0,self.insibilitySteps,[])
+        
+    def optirec(self,H,F,p,i,steps,path):
+        if H[position[0],position[1]] > steps:
+            return []
+        else:
+            longest = 0
+            for j in range(0,len(H)):
+                steps = steps-F[i][p[0]][p[1]]
+                path = self.optirec(H,F,p,j,steps,path)
+                return []
+            
+        
+         
+    def is_invinsible(self,gameState):
+        try:
+            current_capsules = self.getCapsules(self.getCurrentObservation())
+            previous_capsules = self.getCapsules(self.getPreviousObservation())
+        except: 
+            return False
         position = gameState.getAgentPosition(self.index)
+        if self.insibilitySteps > 0:
+            self.insibilitySteps -= 1
+            print("agent " + str(self.index) + " is invisible! " + str(self.insibilitySteps))
+            return True
+        if len(current_capsules) == len(previous_capsules) or len(previous_capsules) == 0:
+            return False
+        else:
+            self.insibilitySteps = 40
+            print("agent " + str(self.index) + " became invisible!")
+            return True
+    def find_closest_enemy_food_invinsible(self,gameState):
+        print("WOOO LETS GOOOO")
+        position = gameState.getAgentPosition(self.index)
+        wall = gameState.getWalls()
         i = position[0]
         j = position[1]
-        moveGrid -= moveGrid[i,j]
-        wall = gameState.getWalls()
+        if self.insibilitySteps - 1 < self.homeDistancePaths[i,j]:
+            moveGrid = self.homeDistancePaths
+        else:
+            moveGrid = self.foodGridPaths
+        return self.get_best_moves_on_grid(moveGrid,position,wall)
+    
+    def get_best_moves_on_grid(self, moveGrid,position,wall):
         cross = [(1,0),(-1,0),(0,1),(0,-1)]
+        i = position[0]
+        j = position[1]
         bestMove = 999999
         bestDir = Directions.STOP
         for offset in cross:
@@ -352,6 +430,20 @@ class SimpleAgent(CaptureAgent):
                 bestDir = self.convert_neighbour_to_action(position,(ii+i,jj+j))
                 print(bestDir)
         return [bestDir]
+    def find_closest_enemy_food2(self,gameState):
+        position = gameState.getAgentPosition(self.index)
+        i = position[0]
+        j = position[1]
+        closestEnemy = self.enemyGridPaths[i,j]
+        escapeDistance = 4
+        
+        wall = gameState.getWalls()
+        alpha = (1,-1)[self.is_home_territory(gameState,position,wall) and closestEnemy < 4]
+        gamma = (closestEnemy/escapeDistance*0.5+0.5,0)[alpha == -1]
+        moveGrid = alpha*(-self.enemyGridPaths+self.agentPaths)+gamma*self.foodGridPaths
+        moveGrid -= moveGrid[i,j]
+        return self.get_best_moves_on_grid(moveGrid,position,wall)
+
     def find_closest_enemy_food(self, gameState):
         '''
         BFS to closest enemy food, return a move towards
@@ -382,7 +474,7 @@ class SimpleAgent(CaptureAgent):
         pos = gameState.getAgentPosition(self.index)
 
         if len(enemy_capsule) == 0:
-            return random.choice(gameState.getLegalActions(self.index))
+            return gameState.getLegalActions(self.index), 0
 
         aim, path = self.bfs_until(
             pos, lambda x: x in enemy_capsule, wall, True)
@@ -428,12 +520,13 @@ class SimpleAgent(CaptureAgent):
             return self.convert_neighbour_to_action(pos, path[-1])
 
     def chase_capsule(self, gameState):
-        '''
-        function to decide if we chase the enemy power capsule
-        (called on enemy terrain)
-        '''
-
-        return False
+        enemy_capsule = self.getCapsules(gameState)
+        if not len(enemy_capsule) == 0:
+            i = enemy_capsule[0][0]
+            j = enemy_capsule[0][1]
+            return self.enemyGridPaths[i,j]-self.agentPaths[i,j] > 0
+        else:
+            return False
 
     def defend_own_territory(self, gameState):
         '''
