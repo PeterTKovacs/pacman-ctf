@@ -62,7 +62,101 @@ class SimpleAgent(CaptureAgent):
     create an agent as this is the bare minimum.
     """
     testVar = 5
-    enemyBeleif = np.zeros(())
+    initialized = False
+    isRed = []
+    positions = []
+    def setupBelief(self,gameState):
+        wall = gameState.getWalls()
+        width = wall.width
+        height = wall.height
+        if not self.__class__.initialized:
+            self.__class__.isRed = [True, True, True, True]
+            self.__class__.positions = [np.zeros((width,height),int), np.zeros((width,height),int), np.zeros((width,height),int), np.zeros((width,height),int)]
+            self.__class__.spawnPositions = [(0,0),(0,0),(0,0),(0,0)]
+            self.__class__.initialized = True
+        idx = self.index
+        self.__class__.isRed[idx] = False
+        position = gameState.getAgentPosition(self.index)
+        enemyIdx = (idx-1)%4
+        self.__class__.spawnPositions[enemyIdx] = (width-position[0]-1,height-position[1]-1)
+        self.__class__.positions[enemyIdx][width-position[0]-1,height-position[1]-1] = 1
+        #print("ENEMY BELIIIFEI")
+        #print(self.__class__.positions[enemyIdx])
+    def updatePositions(self,gameState):
+        idx = self.index
+        enemyIdx = (idx-1)%4
+        self.killEnemyAgents(gameState)
+        self.__class__.positions[enemyIdx] = self.stepOponent(gameState,enemyIdx)
+        self.updatePositionsFromDistance(gameState)
+        self.updatePositionsFromDirectObs(gameState)
+        
+        #print(self.__class__.positions[enemyIdx])
+    def manhattanDist(self,p1,p2):
+        return int(abs(p1[0]-p2[0])+np.abs(p1[1]-p2[1]))
+    def killEnemyAgents(self,gameState):
+        current_observation = self.getCurrentObservation()
+        previous_observation = self.getPreviousObservation()
+        if current_observation == None or previous_observation == None:
+            return
+        ownPosCurrent = current_observation.getAgentPosition(self.index)
+        ownPosPrevious = previous_observation.getAgentPosition(self.index)
+        #If we moved more than one step we were the ones who died
+        wall = gameState.getWalls()
+        if self.manhattanDist(ownPosCurrent,ownPosPrevious) > 2:
+            return
+        for idx in self.getOpponents(gameState):
+            
+            posCurrent = current_observation.getAgentPosition(idx)
+            posPrevious = previous_observation.getAgentPosition(idx)
+            #If the enemy position was known before, is unknown now, and previous distance was less than 2
+            if posCurrent == None and posPrevious == None:
+                continue
+            if not posCurrent == None and not posPrevious == None:
+                continue
+            if not posCurrent == None:
+                continue
+            if self.manhattanDist(ownPosCurrent,posPrevious) == 0:
+                #enemy died
+                self.__class__.spawnPositions[idx] = np.zeros((wall.width,wall.height),int)   
+                enemyspawn_i = self.__class__.spawnPositions[idx][0]
+                enemyspawn_j = self.__class__.spawnPositions[idx][1]
+                self.__class__.positions[idx][enemyspawn_i,enemyspawn_j] = 1
+                
+    def updatePositionsFromDistance(self,gameState):
+        wall = gameState.getWalls()
+        current_observation = self.getCurrentObservation()
+        x = np.linspace(0, wall.width-1, wall.width).astype(int)
+        y = np.linspace(0, wall.height-1, wall.height).astype(int)
+        xgrid, ygrid = np.meshgrid(x, y, indexing='ij')
+        position = gameState.getAgentPosition(self.index)
+        xdist = xgrid - position[0]
+        ydist = ygrid - position[1]
+        
+        manhatan = abs(xdist) + abs(ydist)
+        
+        for idx in self.getOpponents(gameState):
+            reading = current_observation.getAgentDistances()[idx]
+            #Enemy is within 7 units of the reading
+            posiblePositions1 = (abs(manhatan-reading) < 7).astype(int)
+            #Enemy is also at least 6 units away else we would have seen them
+            posiblePositions2 = (manhatan > 5).astype(int)
+            posiblePositions = np.multiply(posiblePositions1,posiblePositions2)
+            #print(posiblePositions)
+            self.__class__.positions[idx] = np.multiply(self.__class__.positions[idx], posiblePositions)
+    def updatePositionsFromDirectObs(self,gameState):
+        for idx in self.getOpponents(gameState):
+            pos = self.getCurrentObservation().getAgentPosition(idx)
+            if not pos == None:
+                self.__class__.positions[idx] = np.zeros(
+                    self.__class__.positions[idx].shape, int)
+                self.__class__.positions[idx][pos[0], pos[1]] = 1.
+    
+    def stepOponent(self,gameState,idx):
+        wall = gameState.getWalls()
+        start = self.__class__.positions[idx]
+        steps = self.makeShortestPathGrid(wall,start)
+        spread = (steps < 2).astype(int)
+        return spread
     def makHomeTurfGrid(self,grid):
         halfway = int(grid.width / 2)
         self.hometurf = Grid(grid.width, grid.height, False)
@@ -103,7 +197,9 @@ class SimpleAgent(CaptureAgent):
         wall = gameState.getWalls()
         belief = np.zeros((wall.width, wall.height),int)
         for idx in self.getOpponents(gameState):
-            belief += self.enemy_p_belief[idx] > 0
+            belief += self.__class__.positions[idx] > 0
+            
+        belief = (belief > 0).astype(int)
         self.plotGrid(belief-1,(-0.1,0.1))
         return self.makeShortestPathGrid(wall,belief)
     
@@ -137,7 +233,7 @@ class SimpleAgent(CaptureAgent):
         self.start = gameState.getAgentPosition(
             self.index)  # copied from baseline
         CaptureAgent.registerInitialState(self, gameState)
-
+        self.step = 0
         #print(self.start)
 
         # can we do better for the initial belief than uniform?
@@ -146,7 +242,7 @@ class SimpleAgent(CaptureAgent):
         '''
     Your initialization code goes here, if you need any.
     '''
-
+        self.setupBelief(gameState)
         wall = gameState.getWalls()
         #print("here are walls")
         #print(wall)
@@ -176,37 +272,41 @@ class SimpleAgent(CaptureAgent):
         upper = range[1]
         lower = range[0]
         points = list(zip(*np.where(np.multiply(grid > lower,grid < upper))))
-        print(points)
+        #print(points)
         self.debugDraw(points, [0.5, 0.5, 0.], True)
     def chooseAction(self, gameState):
+        if self.step == 0:
+            self.setupBelief(gameState)
+        self.step += 1
+        self.updatePositions(gameState)
+        
         self.numCarrying = gameState.data.agentStates[self.index].numCarrying
         own_team = self.getTeam(gameState)
-        print(self.__class__.testVar)
+        #print(self.__class__.testVar)
         if self.__class__.testVar == 5 and self.index == 1:
             self.__class__.testVar = 10
         current_observation = self.getCurrentObservation()
         previous_observation = self.getPreviousObservation()
-        self.is_invinsible(gameState)
         own_pos = gameState.getAgentPosition(self.index)
 
         enemy_idx = self.getOpponents(gameState)
 
         ### update beliefs ################################
 
-        self.belief_transition(
-            current_observation, previous_observation, self.uniform_policy)
+        #self.belief_transition(
+            #current_observation, previous_observation, self.uniform_policy)
 
-        if self.index == min(own_team):
+        #if self.index == min(own_team):
 
-            for x in range(self.enemy_p_belief[min(enemy_idx)].shape[0]):
-                for y in range(self.enemy_p_belief[min(enemy_idx)].shape[1]):
+            #for x in range(self.enemy_p_belief[min(enemy_idx)].shape[0]):
+                #for y in range(self.enemy_p_belief[min(enemy_idx)].shape[1]):
 
                     # _man=np.abs(own_pos[0]-x)+np.abs(own_pos[1]-y)
 
-                    if x == 0 and y == 0:
-                        delete = True
-                    else:
-                        delete = False
+                    #if x == 0 and y == 0:
+                        #delete = True
+                    #else:
+                        #delete = False
                     #self.debugDraw([(x,y)],[0.,min(1e12*self.enemy_p_belief[min(enemy_idx)][x,y],1.),0.],delete)
 
                     #self.debugDraw([(x,y)],[0.,min(1.,20*self.enemy_p_belief[min(enemy_idx)][x,y]),0.],delete)
@@ -262,7 +362,7 @@ class SimpleAgent(CaptureAgent):
         
     You should change this in your own agent.
     '''
-        print(actions)
+        #print(actions)
         # return 'east' 'west' 'south' or 'north'
         return random.choice(actions)
 
@@ -276,6 +376,10 @@ class SimpleAgent(CaptureAgent):
         function to decide wheter we should go for enemy food
         (called on enemy terrain)
         '''
+        enemy_food = self.getFood(gameState)
+        numberOfFoods = np.sum(np.sum(np.array(enemy_food.data),axis=1),axis=0)
+        if numberOfFoods < 3:
+            return False
         _ , length = self.find_closest_enemy_food(gameState)
         return  (self.numCarrying == 0) or (self.numCarrying == 1 and length < 5)  or (self.numCarrying == 2 and length < 4)  or (self.numCarrying == 3 and length < 3)  or (self.numCarrying == 4 and length < 2)or (self.numCarrying == 5 and length < 1)
         return False
@@ -361,7 +465,7 @@ class SimpleAgent(CaptureAgent):
                 _parent = parent[_parent]
 
         if plot:
-            print(path)
+            #print(path)
             self.debugDraw(path, [0.5, 0.5, 0.], True)
         #print("path length is " + str(len(path)))
         return aim, path
@@ -397,13 +501,11 @@ class SimpleAgent(CaptureAgent):
         if self.insibilitySteps > 0:
             self.insibilitySteps -= 1
             print("agent " + str(self.index) + " is invisible! " + str(self.insibilitySteps))
-            return True
-        if len(current_capsules) == len(previous_capsules) or len(previous_capsules) == 0:
-            return False
-        else:
+        if not len(current_capsules) == len(previous_capsules):
             self.insibilitySteps = 40
             print("agent " + str(self.index) + " became invisible!")
-            return True
+        return self.insibilitySteps > 0
+        
     def find_closest_enemy_food_invinsible(self,gameState):
         print("WOOO LETS GOOOO")
         position = gameState.getAgentPosition(self.index)
@@ -428,7 +530,7 @@ class SimpleAgent(CaptureAgent):
             if not wall[ii+i][jj+j] and moveGrid[ii+i][jj+j] < bestMove:
                 bestMove = moveGrid[ii+i][jj+j]
                 bestDir = self.convert_neighbour_to_action(position,(ii+i,jj+j))
-                print(bestDir)
+                #print(bestDir)
         return [bestDir]
     def find_closest_enemy_food2(self,gameState):
         position = gameState.getAgentPosition(self.index)
@@ -657,7 +759,7 @@ class SimpleAgent(CaptureAgent):
     def makeShortestPathGrid(self,walls,start):
         """Creates a grid of the map with the number of moves to get to every point in the map a given set of starting point(s)
             Walls is a grid object with true and false if there is a wall in a given spot. Start is a numpy array which is 1 where we start and 0 otherwise"""
-        newPoints = deque(zip(*np.where(start > 0)))
+        newPoints = deque(zip(*np.where(start > 0.5)))
         #print("ZIOP")
         #print(newPoints)
         pathMatrix = np.full((walls.width, walls.height),99999, float)
